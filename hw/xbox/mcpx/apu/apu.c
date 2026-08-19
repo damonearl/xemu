@@ -20,6 +20,9 @@
  */
 
 #include "apu_int.h"
+#ifdef __APPLE__
+#include "ui/xemu-os-utils.h"
+#endif
 
 MCPXAPUState *g_state; // Used via debug handlers
 
@@ -50,7 +53,7 @@ static uint64_t mcpx_apu_read(void *opaque, hwaddr addr, unsigned int size)
     uint64_t r = 0;
     switch (addr) {
     case NV_PAPU_XGSCNT:
-        r = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) / 100; //???
+        r = (uint64_t)d->ep_frame_div * NUM_SAMPLES_PER_FRAME;
         break;
     default:
         if (addr < 0x20000) {
@@ -257,6 +260,9 @@ static void se_frame(MCPXAPUState *d)
 static void *mcpx_apu_frame_thread(void *arg)
 {
     MCPXAPUState *d = MCPX_APU_DEVICE(arg);
+#ifdef __APPLE__
+    xemu_macos_set_audio_thread_priority();
+#endif
     qemu_mutex_lock(&d->lock);
     while (!qatomic_read(&d->exiting)) {
         if (d->pause_requested) {

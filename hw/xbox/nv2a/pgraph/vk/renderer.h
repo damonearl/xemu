@@ -41,7 +41,15 @@
 #include "constants.h"
 #include "glsl.h"
 
+/* Apple's OpenGL is frozen at 4.1 and lacks EXT_memory_object, so the
+ * GL<->Vulkan external-memory interop used to present cannot work on macOS.
+ * Instead the rendered display image is read back to the CPU and uploaded to a
+ * regular GL texture (see vk/display.c). */
+#if defined(__APPLE__)
+#define HAVE_EXTERNAL_MEMORY 0
+#else
 #define HAVE_EXTERNAL_MEMORY 1
+#endif
 
 typedef struct QueueFamilyIndices {
     int queue_family;
@@ -92,6 +100,10 @@ enum Buffer {
     BUFFER_VERTEX_INLINE_STAGING,
     BUFFER_UNIFORM,
     BUFFER_UNIFORM_STAGING,
+    /* Per-vertex clip-space positions written by a vertex-shader pre-pass and
+     * read by the fragment shader to emulate the geometry shader's per-triangle
+     * outputs (vtxPos0/1/2, triMZ) on Metal/MoltenVK (no geometry shaders). */
+    BUFFER_CLIP_POS,
     BUFFER_COUNT
 };
 
@@ -194,6 +206,9 @@ typedef struct ShaderBinding {
         ShaderModuleInfo *module_info;
         PshUniformLocs uniform_locs;
     } psh;
+    /* Uses the geometry-shader-free clip-position SSBO path; the draw path must
+     * run a vertex-only pre-pass to populate clipPos before the main draw. */
+    bool clip_pos_ssbo;
 } ShaderBinding;
 
 typedef struct TextureKey {
@@ -287,12 +302,22 @@ typedef struct PGRAPHVkDisplayState {
     int draw_time;
 
     // OpenGL Interop
+#if HAVE_EXTERNAL_MEMORY
 #ifdef WIN32
     HANDLE handle;
 #else
     int fd;
 #endif
     GLuint gl_memory_obj;
+#else
+    // CPU readback present (no external-memory interop, e.g. macOS): the display
+    // image is copied into this host-visible buffer, then uploaded to the GL
+    // texture for the normal GL present path.
+    VkBuffer readback_buffer;
+    VkDeviceMemory readback_memory;
+    VkDeviceSize readback_size;
+    void *readback_mapped;
+#endif
     GLuint gl_texture_id;
 } PGRAPHVkDisplayState;
 
@@ -327,6 +352,7 @@ typedef struct PGRAPHVkState {
     bool debug_utils_extension_enabled;
     bool custom_border_color_extension_enabled;
     bool memory_budget_extension_enabled;
+    bool fragment_shader_barycentric_enabled;
 
     VkPhysicalDevice physical_device;
     VkPhysicalDeviceFeatures enabled_physical_device_features;
@@ -375,6 +401,13 @@ typedef struct PGRAPHVkState {
     size_t num_vertex_ram_buffer_syncs;
     unsigned long *uploaded_bitmap;
     size_t bitmap_size;
+/* Granularity (bytes) of vertex-RAM upload conflict tracking. A finer unit than
+ * the 4KB guest page reduces false-positive VK_FINISH_REASON_VERTEX_BUFFER_DIRTY
+ * pipeline flushes: two non-overlapping vertex writes packed into the same page
+ * previously forced a full GPU finish. Tracking is strictly more precise as the
+ * unit shrinks (a real byte-range overlap always shares a unit), so this only
+ * removes spurious flushes. 256B keeps the bitmap tiny (VRAM/256). */
+#define VERTEX_RAM_DIRTY_TRACK_GRANULARITY 256
 
     VkVertexInputAttributeDescription vertex_attribute_descriptions[NV2A_VERTEXSHADER_ATTRIBUTES];
     int vertex_attribute_to_description_location[NV2A_VERTEXSHADER_ATTRIBUTES];

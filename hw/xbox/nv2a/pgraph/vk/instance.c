@@ -19,6 +19,7 @@
 
 #include "qemu/osdep.h"
 #include "ui/xemu-settings.h"
+#include "ui/xemu-os-utils.h"
 #include "renderer.h"
 #include "xemu-version.h"
 
@@ -32,12 +33,19 @@ static char const *const validation_layers[] = {
 };
 
 static char const *const required_device_extensions[] = {
+#if HAVE_EXTERNAL_MEMORY
 #ifdef WIN32
     VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
     VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME,
 #else
     VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
     VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
+#endif
+#else
+    /* No external-memory interop (macOS/MoltenVK). MoltenVK always exposes (and
+     * the spec requires enabling) VK_KHR_portability_subset; requiring it here
+     * both satisfies that rule and keeps this array non-empty. */
+    "VK_KHR_portability_subset",
 #endif
 };
 
@@ -142,6 +150,13 @@ add_optional_instance_extension_names(PGRAPHState *pg,
         g_config.display.vulkan.validation_layers &&
         add_extension_if_available(available_extensions, enabled_extension_names,
                                    VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
+#if !HAVE_EXTERNAL_MEMORY
+    /* Portability drivers (MoltenVK) are only enumerated when this instance
+     * extension is enabled and the matching create flag is set. */
+    add_extension_if_available(available_extensions, enabled_extension_names,
+                               VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+#endif
 }
 
 static bool create_instance(PGRAPHState *pg, Error **errp)
@@ -149,10 +164,19 @@ static bool create_instance(PGRAPHState *pg, Error **errp)
     PGRAPHVkState *r = pg->vk_renderer_state;
     VkResult result;
 
-    result = volkInitialize();
-    if (result != VK_SUCCESS) {
-        error_setg(errp, "volkInitialize failed");
-        return false;
+#if defined(__APPLE__)
+    PFN_vkGetInstanceProcAddr bundled_gipa =
+        (PFN_vkGetInstanceProcAddr)xemu_macos_get_bundled_vk_get_instance_proc_addr();
+    if (bundled_gipa) {
+        volkInitializeCustom(bundled_gipa);
+    } else
+#endif
+    {
+        result = volkInitialize();
+        if (result != VK_SUCCESS) {
+            error_setg(errp, "volkInitialize failed");
+            return false;
+        }
     }
 
     uint32_t instance_version = VK_API_VERSION_1_0;
@@ -199,6 +223,9 @@ static bool create_instance(PGRAPHState *pg, Error **errp)
         .enabledExtensionCount = enabled_extension_names->len,
         .ppEnabledExtensionNames =
             &g_array_index(enabled_extension_names, const char *, 0),
+#if !HAVE_EXTERNAL_MEMORY
+        .flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
+#endif
     };
 
     enable_validation = g_config.display.vulkan.validation_layers;
@@ -331,6 +358,15 @@ static void add_optional_device_extension_names(
     r->memory_budget_extension_enabled = add_extension_if_available(
         available_extensions, enabled_extension_names,
         VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+
+#if !HAVE_EXTERNAL_MEMORY
+    /* Used to emulate the geometry shader's per-triangle outputs (vtxPos0/1/2,
+     * triMZ) in the fragment shader on Metal/MoltenVK, which has no geometry
+     * shaders. */
+    r->fragment_shader_barycentric_enabled = add_extension_if_available(
+        available_extensions, enabled_extension_names,
+        VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
+#endif
 }
 
 static bool check_device_support_required_extensions(VkPhysicalDevice device)
@@ -489,7 +525,10 @@ static bool create_logical_device(PGRAPHState *pg, Error **errp)
         }
         F(depthClamp, true),
         F(fillModeNonSolid, true),
-        F(geometryShader, true),
+        /* Metal/MoltenVK has no geometry shaders. On macOS we emulate the
+         * geometry-shader work (primitive expansion, z-perspective) without it,
+         * so it is optional there; required elsewhere. */
+        F(geometryShader, HAVE_EXTERNAL_MEMORY),
         F(occlusionQueryPrecise, true),
         F(samplerAnisotropy, false),
         F(shaderClipDistance, true),
@@ -517,6 +556,18 @@ static bool create_logical_device(PGRAPHState *pg, Error **errp)
     }
 
     void *next_struct = NULL;
+
+    VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR barycentric_features;
+    if (r->fragment_shader_barycentric_enabled) {
+        barycentric_features =
+            (VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR){
+                .sType =
+                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR,
+                .fragmentShaderBarycentric = VK_TRUE,
+                .pNext = next_struct,
+            };
+        next_struct = &barycentric_features;
+    }
 
     VkPhysicalDeviceCustomBorderColorFeaturesEXT custom_border_features;
     if (r->custom_border_color_extension_enabled) {

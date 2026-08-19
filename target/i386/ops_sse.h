@@ -511,10 +511,16 @@ void glue(helper_pshufhw, SUFFIX)(Reg *d, Reg *s, int order)
 
 #endif
 
-#define FPU_ADD(size, a, b) float ## size ## _add(a, b, &env->sse_status)
-#define FPU_SUB(size, a, b) float ## size ## _sub(a, b, &env->sse_status)
-#define FPU_MUL(size, a, b) float ## size ## _mul(a, b, &env->sse_status)
-#define FPU_DIV(size, a, b) float ## size ## _div(a, b, &env->sse_status)
+/*
+ * add/sub/mul/div go through sse_<op><size>() which uses native host FP when
+ * the guest FP environment is host-default (see fpu_helper.c), else softfloat.
+ * min/max/cmp/cvt below deliberately stay on softfloat (trickier NaN/edge
+ * semantics, and not the profiled hotspots).
+ */
+#define FPU_ADD(size, a, b) glue(sse_add, size)(a, b, env)
+#define FPU_SUB(size, a, b) glue(sse_sub, size)(a, b, env)
+#define FPU_MUL(size, a, b) glue(sse_mul, size)(a, b, env)
+#define FPU_DIV(size, a, b) glue(sse_div, size)(a, b, env)
 
 /* Note that the choice of comparison op here is important to get the
  * special cases right: for min and max Intel specifies that (-0,0),
@@ -1052,10 +1058,10 @@ static inline bool FPU_GE(FloatRelation x)
 /* We must make sure we evaluate the argument in case it is a signalling NAN */
 #define FPU_FALSE(x) (x == float_relation_equal && 0)
 
-#define FPU_CMPQ(size, a, b) \
-    float ## size ## _compare_quiet(a, b, &env->sse_status)
-#define FPU_CMPS(size, a, b) \
-    float ## size ## _compare(a, b, &env->sse_status)
+/* Route through sse_cmp<size>(), which uses native host compares when the FP
+ * env is host-default and softfloat otherwise (see fpu_helper.c). */
+#define FPU_CMPQ(size, a, b) glue(sse_cmp, size)(a, b, env, true)
+#define FPU_CMPS(size, a, b) glue(sse_cmp, size)(a, b, env, false)
 
 #else
 #define SSE_HELPER_CMP(name, F, C) SSE_HELPER_CMP_P(name, F, C)
