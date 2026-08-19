@@ -1,13 +1,17 @@
-# xemu
+# xemu (damonearl fork)
 
-xemu is an original Xbox emulator, built as a fork of QEMU. The official
-project site — with prebuilt downloads, FAQ, compatibility list, and general
-troubleshooting — lives at [https://xemu.app](https://xemu.app). This README
-covers building and running xemu from source.
+This is **[damonearl/xemu](https://github.com/damonearl/xemu)**, a personal
+fork of the [xemu](https://xemu.app) Xbox emulator focused on performance
+work (CPU optimizations, NV2A/Halo 2 tuning, macOS smoothness). This README
+covers building and running **this fork** from source.
 
-> If you just want to *play games*, you almost certainly want the official
-> prebuilt binary from [xemu.app/download](https://xemu.app/download/). Build
-> from source only if you are developing on xemu or need an unreleased change.
+Upstream project site — prebuilt binaries, FAQ, compatibility list, general
+troubleshooting — is at [https://xemu.app](https://xemu.app).
+
+> If you just want to *play games*, grab the official prebuilt binary from
+> [xemu.app/download](https://xemu.app/download/). Build this fork from
+> source only if you specifically want the performance changes here or plan
+> to hack on the code.
 
 ---
 
@@ -61,10 +65,11 @@ dependencies above). Build inside an MSYS2 MinGW64 shell.
 
 ### 2. Clone the repo
 
-xemu uses git submodules. Clone recursively:
+This fork uses git submodules (inherited from upstream QEMU). Clone
+recursively:
 
 ```bash
-git clone --recursive https://github.com/xemu-project/xemu.git
+git clone --recursive https://github.com/damonearl/xemu.git
 cd xemu
 ```
 
@@ -73,6 +78,18 @@ If you already cloned without `--recursive`:
 ```bash
 git submodule update --init --recursive
 ```
+
+Active development branches on this fork:
+
+- `master` — tracking branch, kept close to upstream.
+- `m5-halo2-optimization` — current performance work (CPU/JIT tweaks,
+  NV2A tuning). Check this branch out if you want the Halo 2 / macOS
+  smoothness changes:
+
+  ```bash
+  git checkout m5-halo2-optimization
+  git submodule update --init --recursive
+  ```
 
 ### 3. Build
 
@@ -147,15 +164,18 @@ on Linux, `~/Library/Application Support/xemu/` on macOS,
   Vulkan backend.
 - **Missing submodule / meson errors:** run
   `git submodule update --init --recursive` and try again.
-- **Something else is broken:** check `build.log` for the actual error, then
-  ask on the xemu Discord (link on [xemu.app](https://xemu.app)) or open an
-  issue.
+- **Something else is broken:** check `build.log` for the actual error.
+  For issues with **this fork** (Halo 2 perf branch, etc.), open an issue at
+  [github.com/damonearl/xemu/issues](https://github.com/damonearl/xemu/issues).
+  For general xemu problems, ask on the upstream xemu Discord (link on
+  [xemu.app](https://xemu.app)).
 
 ---
 
 ## Where to go next
 
-- Project site & docs: [https://xemu.app](https://xemu.app)
+- This fork: [https://github.com/damonearl/xemu](https://github.com/damonearl/xemu)
+- Upstream project site & docs: [https://xemu.app](https://xemu.app)
 - Compatibility list: [https://xemu.app/compatibility](https://xemu.app/compatibility/)
 - Contributor notes: see `CLAUDE.md` in this repo for an architecture overview
   (Xbox hardware layout, NV2A GPU pipeline, renderer selection, config schema).
